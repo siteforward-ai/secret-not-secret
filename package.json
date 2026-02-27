@@ -1,6 +1,6 @@
 {
   "name": "@siteforward/secret-not-secret",
-  "version": "0.0.0-semantically-released",
+  "version": "1.0.0",
   "description": "Entropy-based secrets scanner for git repos — detects high-entropy strings in staged or tracked files",
   "type": "module",
   "main": "./dist/index.js",
