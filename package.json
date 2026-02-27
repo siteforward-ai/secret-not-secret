@@ -1,0 +1,62 @@
+{
+  "name": "@siteforward/secret-not-secret",
+  "version": "0.0.0-semantically-released",
+  "description": "Entropy-based secrets scanner for git repos — detects high-entropy strings in staged or tracked files",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "bin": {
+    "scan-secrets": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/cli.js",
+    "build:watch": "tsc --watch",
+    "test": "node --import tsx/esm --test test/entropy.test.ts test/scanner.test.ts test/whitelist.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "keywords": [
+    "secrets",
+    "security",
+    "entropy",
+    "pre-commit",
+    "git"
+  ],
+  "author": "SiteForward AI",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/siteforward-ai/secret-not-secret.git"
+  },
+  "dependencies": {
+    "minimatch": "^10.0.1"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.6",
+    "@semantic-release/npm": "^13.1.4",
+    "@semantic-release/release-notes-generator": "^14.1.0",
+    "@types/minimatch": "^5.1.2",
+    "@types/node": "^22.0.0",
+    "semantic-release": "^25.0.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.8.3"
+  }
+}
