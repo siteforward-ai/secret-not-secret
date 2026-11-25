@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js",
     "build:watch": "tsc --watch",
-    "test": "node --import tsx/esm --test test/entropy.test.ts test/scanner.test.ts test/whitelist.test.ts",
+    "test": "node --import tsx/esm --test test/entropy.test.ts test/scanner.test.ts test/whitelist.test.ts test/cli.test.ts",
     "prepublishOnly": "npm run build"
   },
   "engines": {

@@ -12,6 +12,9 @@
  *   --whitelist <path>       Path to whitelist file (default: not-secret-strings.txt)
  *   --excluded-paths <path>  Path to excluded-paths file (default: not-secret-paths.txt)
  *
+ * Exit codes: 0 = clean, 1 = potential secrets found,
+ *             2 = no secrets found, but some files could not be read (not scanned)
+ *
  * Whitelist format (not-secret-strings.txt):
  *   Each non-comment line: filepath<whitespace>secret_string
  *   A filepath of '*' matches any file.
@@ -19,7 +22,7 @@
 
 import { readFileSync } from "fs";
 import { resolve, relative } from "path";
-import { findSecretsInText, isBinary } from "./scanner.js";
+import { findSecretsInText, isBinaryContent } from "./scanner.js";
 import { loadWhitelist, isWhitelisted } from "./whitelist.js";
 import { loadExcludedPaths, isExcluded } from "./paths.js";
 import { gitLsFiles, gitStagedFiles } from "./git.js";
@@ -41,15 +44,11 @@ function scanFile(
   excluded: string[]
 ): FileFinding[] {
   if (isExcluded(filePath, excluded, REPO_ROOT)) return [];
-  if (isBinary(filePath)) return [];
 
-  let content: string;
-  try {
-    content = readFileSync(filePath, "utf8");
-  } catch (err) {
-    process.stderr.write(`Warning: could not read ${filePath}: ${err}\n`);
-    return [];
-  }
+  // Read once; throws if the file cannot be read (reported by the caller).
+  const buf = readFileSync(filePath);
+  if (isBinaryContent(buf)) return [];
+  const content = buf.toString("utf8");
 
   const rel = relative(REPO_ROOT, resolve(filePath));
   return findSecretsInText(content)
@@ -95,11 +94,27 @@ function main(): number {
   const excluded = loadExcludedPaths(excludedPathsPath);
 
   const allFindings: FileFinding[] = [];
+  const unreadable: string[] = [];
   for (const filePath of files) {
-    allFindings.push(...scanFile(filePath, whitelist, excluded));
+    try {
+      allFindings.push(...scanFile(filePath, whitelist, excluded));
+    } catch (err) {
+      unreadable.push(filePath);
+      const reason = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `Error: could not read ${relative(REPO_ROOT, resolve(filePath))}, not scanned: ${reason}\n`
+      );
+    }
   }
 
-  if (allFindings.length === 0) return 0;
+  // Exit codes: 0 = clean, 1 = potential secrets found,
+  // 2 = no secrets found but one or more files could not be read/scanned.
+  const unreadableExit = unreadable.length > 0 ? 2 : 0;
+  if (unreadable.length > 0) {
+    process.stderr.write(`${unreadable.length} file(s) could not be scanned.\n`);
+  }
+
+  if (allFindings.length === 0) return unreadableExit;
 
   if (listMode) {
     // Output unique (filepath, secret) pairs ready to paste into not-secret-strings.txt
