@@ -107,19 +107,43 @@ export function findSecretsInText(content: string): Finding[] {
   return findings;
 }
 
-export function isBinary(filePath: string): boolean {
-  try {
-    const buf = Buffer.alloc(8192);
-    const fd = openSync(filePath, "r");
-    const bytesRead = readSync(fd, buf, 0, 8192, 0);
-    closeSync(fd);
-    return buf.subarray(0, bytesRead).includes(0);
-  } catch {
-    return true;
+const BINARY_SNIFF_BYTES = 8192;
+
+/**
+ * Returns true if the given content looks binary, i.e. it contains a NUL
+ * byte within its first 8192 bytes. Accepts a Buffer, Uint8Array or string.
+ */
+export function isBinaryContent(content: Buffer | Uint8Array | string): boolean {
+  if (typeof content === "string") {
+    return content.slice(0, BINARY_SNIFF_BYTES).includes("\0");
   }
+  if (content instanceof Uint8Array) {
+    return content.subarray(0, BINARY_SNIFF_BYTES).includes(0);
+  }
+  throw new TypeError(
+    "isBinaryContent(content) expects a Buffer, Uint8Array or string"
+  );
 }
 
-/** Same heuristic as isBinary, applied to in-memory content. */
-export function isBinaryContent(buf: Buffer): boolean {
-  return buf.subarray(0, 8192).includes(0);
+/**
+ * Returns true if the file at `filePath` looks binary (NUL byte within its
+ * first 8192 bytes). Throws if the file cannot be read, and throws a
+ * TypeError if `filePath` is not a string; use `isBinaryContent` to check
+ * content you already have in memory.
+ */
+export function isBinary(filePath: string): boolean {
+  if (typeof filePath !== "string") {
+    throw new TypeError(
+      "isBinary(filePath) expects a file path string; " +
+        "use isBinaryContent(content) to check a Buffer or string"
+    );
+  }
+  const buf = Buffer.alloc(BINARY_SNIFF_BYTES);
+  const fd = openSync(filePath, "r");
+  try {
+    const bytesRead = readSync(fd, buf, 0, BINARY_SNIFF_BYTES, 0);
+    return isBinaryContent(buf.subarray(0, bytesRead));
+  } finally {
+    closeSync(fd);
+  }
 }

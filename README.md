@@ -61,7 +61,7 @@ scan-secrets [--all | --staged | file1 file2 ...] [--list]
 | `--excluded-paths <path>` | `not-secret-paths.txt` | Path to path-exclusion file |
 | `--list` | — | Output findings in whitelist-ready format |
 
-Exits with code `1` if potential secrets are found, `0` if clean.
+Exits with code `1` if potential secrets are found, `0` if clean. Files that cannot be read (missing, permission denied, etc.) are reported on stderr as "not scanned"; if any file could not be scanned and no secrets were found, the exit code is `2`.
 
 ### Example output
 
@@ -157,6 +157,7 @@ import {
   findSecretsInText,
   isSafe,
   isBinary,
+  isBinaryContent,
   loadWhitelist,
   isWhitelisted,
   loadExcludedPaths,
@@ -180,7 +181,20 @@ if (!isSafe(someString)) {
 // Load and apply a whitelist
 const whitelist = loadWhitelist('not-secret-strings.txt');
 const safe = isWhitelisted('src/config.ts', 'myValue', whitelist);
+
+// Binary detection (a NUL byte in the first 8192 bytes means binary)
+isBinary('path/to/file');        // takes a file PATH; throws if the file can't be read
+isBinaryContent(buffer);         // takes CONTENT: Buffer | Uint8Array | string
 ```
+
+| Function | Takes | Notes |
+| --- | --- | --- |
+| `findSecretsInText(content)` | file content (`string`) | returns `Finding[]` |
+| `isSafe(s)` | a candidate string | `true` if it is unambiguously not a secret |
+| `isBinary(filePath)` | a file path (`string`) | reads the file; throws on read errors, `TypeError` if not given a string |
+| `isBinaryContent(content)` | `Buffer \| Uint8Array \| string` | pure check, no I/O |
+| `loadWhitelist(path)` / `loadExcludedPaths(path)` | a file path | |
+| `isWhitelisted(relPath, s, entries)` | repo-relative path, string, entries | |
 
 ---
 
