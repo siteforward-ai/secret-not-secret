@@ -22,7 +22,7 @@ Strings are scored against three character sets:
 | `base64` | Standard base64 (+ `/`) | 4.3 bits/char | 20 chars |
 | `hex` | Hex (`0-9 a-f`) | 3.7 bits/char | 32 chars |
 
-Legitimate high-entropy values like UUIDs, git SHAs, URLs, and CSS custom properties are filtered out via a built-in safe-pattern list.
+Legitimate high-entropy values like UUIDs, git SHAs, and CSS custom properties are filtered out via a built-in safe-pattern list. Host names inside URLs (e.g. `https://abc123….lambda-url.us-east-1.on.aws/`) are also skipped; credentials, paths and query strings in URLs are still scanned.
 
 When a finding is a known-safe value in your codebase, add it to **`not-secret-strings.txt`** — an allowlist file that maps file path patterns to strings that should never be flagged. Entries use [minimatch](https://github.com/isaacs/minimatch) glob syntax so a single entry can cover an entire directory or file type.
 

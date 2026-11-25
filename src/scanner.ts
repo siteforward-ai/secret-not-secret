@@ -19,7 +19,6 @@ const SAFE_PATTERNS: RegExp[] = [
   /^[a-z]{20,}$/, // all lowercase
   /^[A-Z]{20,}$/, // all uppercase
   /^[A-Za-z_]{20,}$/, // letters + underscores only
-  /^(https?|ftp|wss?):\/\//, // URLs
   /^--[a-z][a-z0-9-]+$/, // CSS custom properties
 ];
 
@@ -42,6 +41,31 @@ function sriSpans(line: string): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
   for (const m of line.matchAll(SRI_PATTERN)) {
     spans.push([m.index!, m.index! + m[0].length]);
+  }
+  return spans;
+}
+
+// URL host names (e.g. `abc123….lambda-url.us-east-1.on.aws`) often contain
+// random-looking labels. Matches that fall entirely inside the host part of a
+// URL are skipped. Userinfo (`user:pass@`), ports, paths and query strings are
+// still scanned.
+const URL_AUTHORITY = /\b(?:https?|ftp|wss?):(\/\/)([^\/?#\s"'`<>]*)/gi;
+
+function urlHostSpans(line: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  for (const m of line.matchAll(URL_AUTHORITY)) {
+    const slashStart = m.index! + m[0].length - m[2].length - 2;
+    const authStart = slashStart + 2;
+    const authority = m[2];
+    const at = authority.lastIndexOf("@");
+    const hostStart = authStart + at + 1;
+    let host = authority.slice(at + 1);
+    const port = host.startsWith("[") ? host.indexOf("]:") + 1 : host.indexOf(":");
+    if (port > 0) host = host.slice(0, port);
+    const hostEnd = hostStart + host.length;
+    // With no userinfo, let the span cover the leading "//" too, since the
+    // base64 pattern (which includes "/") picks it up as part of the match.
+    spans.push([at === -1 ? slashStart : hostStart, hostEnd]);
   }
   return spans;
 }
@@ -74,7 +98,7 @@ export function findSecretsInText(content: string): Finding[] {
   for (let i = 0; i < lines.length; i++) {
     const lineNo = i + 1;
     const line = lines[i];
-    spans = sriSpans(line);
+    spans = [...sriSpans(line), ...urlHostSpans(line)];
 
     // URL-safe base64 / JWT / API tokens (alphanumeric + hyphen + underscore)
     for (const m of line.matchAll(

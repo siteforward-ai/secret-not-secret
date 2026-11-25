@@ -73,6 +73,37 @@ describe("findSecretsInText", () => {
     assert.ok(findings.length > 0);
     assert.equal(findings[0].lineNo, 3);
   });
+  describe("URL hosts", () => {
+    it("does not flag a Lambda function URL host", () => {
+      const findings = findSecretsInText(
+        'const URL = "https://abc123def456ghi789jkl012mno345pq.lambda-url.us-east-1.on.aws/";'
+      );
+      assert.deepEqual(findings, []);
+    });
+
+    it("does not flag a workers.dev style host", () => {
+      const findings = findSecretsInText(
+        "endpoint: https://my-worker-x7Kq9Zp2Lm4Rt8Vb.acct-3fH8kQ2nW9.workers.dev/api/v1"
+      );
+      assert.deepEqual(findings, []);
+    });
+
+    it("still flags a token in a URL query string", () => {
+      const secret = "ghp_aB3dE5fG7hI9jK1lM2nO3pQ4rS5tU6vW7x";
+      const findings = findSecretsInText(
+        `fetch("https://api.example.com/v1/items?key=${secret}")`
+      );
+      assert.ok(findings.some((f) => f.s === secret));
+    });
+
+    it("still flags a password in URL userinfo", () => {
+      const secret = "aB3dE5fG7hI9jK1lM2nO3pQ4rS5tU6vW7x";
+      const findings = findSecretsInText(
+        `const u = "https://admin:${secret}@host.example.com/";`
+      );
+      assert.ok(findings.some((f) => f.s === secret));
+    });
+  });
 
   it("ignores SRI / lockfile integrity hashes", () => {
     const content = [
