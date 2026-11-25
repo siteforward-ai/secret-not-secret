@@ -92,3 +92,8 @@ export function isBinary(filePath: string): boolean {
     return true;
   }
 }
+
+/** Same heuristic as isBinary, applied to in-memory content. */
+export function isBinaryContent(buf: Buffer): boolean {
+  return buf.subarray(0, 8192).includes(0);
+}
