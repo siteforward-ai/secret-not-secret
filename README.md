@@ -59,7 +59,7 @@ npm install --save-dev @siteforward/secret-not-secret
 ## CLI Usage
 
 ```
-scan-secrets [--all | --staged | file1 file2 ...] [--list]
+scan-secrets [--all | --staged | --history [<rev-range>] | file1 file2 ...] [--list]
              [--whitelist <path>] [--excluded-paths <path>]
 ```
 
@@ -69,6 +69,7 @@ scan-secrets [--all | --staged | file1 file2 ...] [--list]
 |------|-------------|
 | `--staged` | Scan only staged files — ideal for a pre-commit hook |
 | `--all` | Scan all git-tracked files |
+| `--history [<rev-range>]` | Scan every version of every file, and every commit message, in git history (default: all commits reachable from any ref). See [Scanning history](#scanning-history) |
 | `file1 file2 ...` | Scan specific files |
 
 ### Options
@@ -89,6 +90,37 @@ src/config.ts	ghp_aB3dE5fG7hI9jK1lM2nO3pQ4rS5tU6vW7x
 
 Found 1 potential secret(s). Add to not-secret-strings.txt if safe.
 ```
+
+---
+
+## Scanning history
+
+Before making a private repository public, scan everything that has ever been committed, not just the current files:
+
+```bash
+scan-secrets --history                    # every commit reachable from any branch or tag
+scan-secrets --history main~10..main      # only commits in a rev-range
+scan-secrets --history=v1.0..HEAD         # same, "=" form
+```
+
+`--history` reads every version of every file in the selected commits (each unique blob is read and scanned once, via `git cat-file --batch`) and every commit message. The allowlist, `not-secret-paths.txt`, default lockfile skipping and the allowlist/excluded-paths files themselves apply as usual, matched against the file's path relative to the repository root. Binary blobs are skipped.
+
+Each finding names the commit where the value first appears in that file, and whether HEAD's version of the file still contains it. Secrets in commit messages are reported under the pseudo-path `<commit-message>`:
+
+```
+# config.env:2 [known-prefix, entropy=4.98] first seen in 1a2b3c4, removed
+config.env  ghp_aB3dE5fG7hI9jK1lM2nO3pQ4rS5tU6vW7x
+# src/keys.ts:8 [token, entropy=4.61] first seen in 5d6e7f8, still in HEAD
+src/keys.ts  Zq8Wm2Xk5Lp9Rt3Vn7Bc1Hd4Jf6Gs0Ya2Ue
+# <commit-message>:3 [token, entropy=4.52] in commit 9a8b7c6
+<commit-message>  Mn4Bv7Cx1Zl9Kj3Hg6Fd2Sa5Qw8Er0Ty4Ui
+
+Found 3 potential secret(s) in history. ...
+```
+
+The `path  value` lines can be pasted into `not-secret-strings.txt` as usual (an entry for `<commit-message>` or `*` covers commit messages). `--list` prints only those lines. A secret marked `removed` is still public once the history is published: rotate it, or rewrite history (e.g. with `git filter-repo`) before publishing.
+
+The rev-range is passed to `git log` as a single revision argument and must not start with `-`. Exit codes are the same as for other modes: `0` clean, `1` findings, `2` no findings but some blobs could not be read (or git could not resolve the rev-range).
 
 ---
 

@@ -18,3 +18,5 @@ export {
   DEFAULT_LOCKFILES,
 } from "./paths.js";
 export { gitLsFiles, gitStagedFiles } from "./git.js";
+export { scanHistory, COMMIT_MESSAGE_PATH } from "./history.js";
+export type { HistoryFinding, HistoryResult, HistoryOptions } from "./history.js";
