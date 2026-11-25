@@ -80,14 +80,22 @@ The most common use case is scanning staged files before every commit. Add this 
 
 ```bash
 #!/bin/sh
-npx scan-secrets --staged
+npx --no-install scan-secrets --staged
 ```
 
 Or with [husky](https://typicode.github.io/husky/):
 
 ```bash
-npx husky add .husky/pre-commit "npx scan-secrets --staged"
+npx husky add .husky/pre-commit "npx --no-install scan-secrets --staged"
 ```
+
+For a one-off scan without adding the package to your project:
+
+```bash
+npx -p @siteforward/secret-not-secret scan-secrets --all
+```
+
+> **Why not plain `npx scan-secrets`?** If the package isn't installed locally, `npx` resolves `scan-secrets` as a registry package name: an unrelated package that anyone could publish under that name. `--no-install` makes the hook fail instead of downloading it, and `-p @siteforward/secret-not-secret` names the exact package to fetch.
 
 ---
 
