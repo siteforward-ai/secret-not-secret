@@ -21,7 +21,7 @@ import { readFileSync } from "fs";
 import { resolve, relative, sep } from "path";
 import { findSecretsInText, isBinary, isBinaryContent } from "./scanner.js";
 import { loadWhitelist, isWhitelisted } from "./whitelist.js";
-import { loadExcludedPaths, isExcluded } from "./paths.js";
+import { loadExcludedPaths, isExcluded, isConfigFile } from "./paths.js";
 import { gitLsFiles, gitStagedFiles, gitShowStaged } from "./git.js";
 import type { WhitelistEntry } from "./whitelist.js";
 
@@ -111,7 +111,11 @@ function main(): number {
   const excluded = loadExcludedPaths(excludedPathsPath);
 
   const allFindings: FileFinding[] = [];
+  // Never scan the allowlist / excluded-paths files themselves: they hold
+  // allowed values by design and would otherwise flag every entry.
+  const configFiles = [whitelistPath, excludedPathsPath];
   for (const filePath of files) {
+    if (isConfigFile(filePath, configFiles)) continue;
     allFindings.push(...scanFile(filePath, whitelist, excluded, staged));
   }
 
