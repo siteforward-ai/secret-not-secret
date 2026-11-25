@@ -22,7 +22,9 @@ Strings are scored against three character sets:
 | `base64` | Standard base64 (+ `/`) | 4.3 bits/char | 20 chars |
 | `hex` | Hex (`0-9 a-f`) | 3.7 bits/char | 32 chars |
 
-Legitimate high-entropy values like UUIDs, git SHAs, URLs, and CSS custom properties are filtered out via a built-in safe-pattern list.
+Legitimate high-entropy values like UUIDs, git SHAs, and CSS custom properties are filtered out via a built-in safe-pattern list. Host names inside URLs (e.g. `https://abc123….lambda-url.us-east-1.on.aws/`) are also skipped; credentials, paths and query strings in URLs are still scanned.
+
+A value can match more than one kind (e.g. `key_1AbC...` is a `token`, and its `1AbC...` tail is also `base64`). When one match lies inside a longer match on the same line, only the longer one is reported.
 
 ### Known prefixes
 
@@ -42,7 +44,7 @@ Both lists are exported as `KNOWN_SECRET_PATTERNS` and `PUBLIC_ID_PREFIXES`.
 
 When a finding is a known-safe value in your codebase, add it to **`not-secret-strings.txt`** — an allowlist file that maps file path patterns to strings that should never be flagged. Entries use [minimatch](https://github.com/isaacs/minimatch) glob syntax so a single entry can cover an entire directory or file type.
 
-Some files should never be scanned at all (generated bundles, lockfiles, test fixtures, etc.). List those path patterns in **`not-secret-paths.txt`** and `scan-secrets` will skip them entirely. Git-ignored files are also skipped automatically.
+Some files should never be scanned at all (generated bundles, lockfiles, test fixtures, etc.). List those path patterns in **`not-secret-paths.txt`** and `scan-secrets` will skip them entirely. Git-ignored files are also skipped automatically. The allowlist and excluded-paths files themselves (the defaults, or whatever `--whitelist` / `--excluded-paths` point to) are always skipped, so their entries are never flagged.
 
 ---
 
@@ -77,7 +79,7 @@ scan-secrets [--all | --staged | file1 file2 ...] [--list]
 | `--excluded-paths <path>` | `not-secret-paths.txt` | Path to path-exclusion file |
 | `--list` | — | Output findings in whitelist-ready format |
 
-Exits with code `1` if potential secrets are found, `0` if clean.
+Exits with code `1` if potential secrets are found, `0` if clean. Files that cannot be read (missing, permission denied, etc.) are reported on stderr as "not scanned"; if any file could not be scanned and no secrets were found, the exit code is `2`.
 
 ### Example output
 
@@ -96,14 +98,22 @@ The most common use case is scanning staged files before every commit. Add this 
 
 ```bash
 #!/bin/sh
-npx scan-secrets --staged
+npx --no-install scan-secrets --staged
 ```
 
 Or with [husky](https://typicode.github.io/husky/):
 
 ```bash
-npx husky add .husky/pre-commit "npx scan-secrets --staged"
+npx husky add .husky/pre-commit "npx --no-install scan-secrets --staged"
 ```
+
+For a one-off scan without adding the package to your project:
+
+```bash
+npx -p @siteforward/secret-not-secret scan-secrets --all
+```
+
+> **Why not plain `npx scan-secrets`?** If the package isn't installed locally, `npx` resolves `scan-secrets` as a registry package name: an unrelated package that anyone could publish under that name. `--no-install` makes the hook fail instead of downloading it, and `-p @siteforward/secret-not-secret` names the exact package to fetch.
 
 ---
 
@@ -130,6 +140,8 @@ test/**  testFixtureToken
 
 Filepath patterns use [minimatch](https://github.com/isaacs/minimatch) glob syntax.
 
+An entry also covers any substring of itself, so allowlisting `key_1AbCdEfGhIjKlMnOpQrStUv` also allowlists `1AbCdEfGhIjKlMnOpQrStUv` in the same files.
+
 ---
 
 ## Excluding Paths
@@ -146,6 +158,16 @@ tests/
 *.map
 ```
 
+### Lockfiles are skipped by default
+
+When scanning with `--all` or `--staged`, these lockfiles are skipped automatically (matched by file name in any directory):
+
+`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `Cargo.lock`, `Gemfile.lock`, `poetry.lock`, `composer.lock`, `go.sum`
+
+To scan a lockfile anyway, pass it explicitly by name, e.g. `scan-secrets package-lock.json`.
+
+Subresource Integrity strings (`sha512-…`, `sha384-…`, `sha256-…`, `sha1-…`) are also treated as safe wherever they appear, so integrity hashes never show up as findings.
+
 ---
 
 ## Programmatic API
@@ -155,6 +177,7 @@ import {
   findSecretsInText,
   isSafe,
   isBinary,
+  isBinaryContent,
   loadWhitelist,
   isWhitelisted,
   loadExcludedPaths,
@@ -178,7 +201,20 @@ if (!isSafe(someString)) {
 // Load and apply a whitelist
 const whitelist = loadWhitelist('not-secret-strings.txt');
 const safe = isWhitelisted('src/config.ts', 'myValue', whitelist);
+
+// Binary detection (a NUL byte in the first 8192 bytes means binary)
+isBinary('path/to/file');        // takes a file PATH; throws if the file can't be read
+isBinaryContent(buffer);         // takes CONTENT: Buffer | Uint8Array | string
 ```
+
+| Function | Takes | Notes |
+| --- | --- | --- |
+| `findSecretsInText(content)` | file content (`string`) | returns `Finding[]` |
+| `isSafe(s)` | a candidate string | `true` if it is unambiguously not a secret |
+| `isBinary(filePath)` | a file path (`string`) | reads the file; throws on read errors, `TypeError` if not given a string |
+| `isBinaryContent(content)` | `Buffer \| Uint8Array \| string` | pure check, no I/O |
+| `loadWhitelist(path)` / `loadExcludedPaths(path)` | a file path | |
+| `isWhitelisted(relPath, s, entries)` | repo-relative path, string, entries | |
 
 ---
 

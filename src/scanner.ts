@@ -19,7 +19,6 @@ const SAFE_PATTERNS: RegExp[] = [
   /^[a-z]{20,}$/, // all lowercase
   /^[A-Z]{20,}$/, // all uppercase
   /^[A-Za-z_]{20,}$/, // letters + underscores only
-  /^(https?|ftp|wss?):\/\//, // URLs
   /^--[a-z][a-z0-9-]+$/, // CSS custom properties
 ];
 
@@ -66,23 +65,68 @@ function overlaps(spans: Span[], start: number, end: number): boolean {
   return spans.some(([s, e]) => start < e && end > s);
 }
 
+// Subresource Integrity / lockfile integrity hashes, e.g. "sha512-<base64>".
+// The extraction regexes below split on "-", so the base64 payload is matched
+// on its own; we instead record the span of each SRI string in the line and
+// skip any candidate that falls inside one.
+const SRI_PATTERN = /\bsha(?:512|384|256|1)-[A-Za-z0-9+/]+={0,2}/g;
+
+function sriSpans(line: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  for (const m of line.matchAll(SRI_PATTERN)) {
+    spans.push([m.index!, m.index! + m[0].length]);
+  }
+  return spans;
+}
+
+// URL host names (e.g. `abc123….lambda-url.us-east-1.on.aws`) often contain
+// random-looking labels. Matches that fall entirely inside the host part of a
+// URL are skipped. Userinfo (`user:pass@`), ports, paths and query strings are
+// still scanned.
+const URL_AUTHORITY = /\b(?:https?|ftp|wss?):(\/\/)([^\/?#\s"'`<>]*)/gi;
+
+function urlHostSpans(line: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  for (const m of line.matchAll(URL_AUTHORITY)) {
+    const slashStart = m.index! + m[0].length - m[2].length - 2;
+    const authStart = slashStart + 2;
+    const authority = m[2];
+    const at = authority.lastIndexOf("@");
+    const hostStart = authStart + at + 1;
+    let host = authority.slice(at + 1);
+    const port = host.startsWith("[") ? host.indexOf("]:") + 1 : host.indexOf(":");
+    if (port > 0) host = host.slice(0, port);
+    const hostEnd = hostStart + host.length;
+    // With no userinfo, let the span cover the leading "//" too, since the
+    // base64 pattern (which includes "/") picks it up as part of the match.
+    spans.push([at === -1 ? slashStart : hostStart, hostEnd]);
+  }
+  return spans;
+}
+
 export type Finding = { lineNo: number; s: string; entropy: number; kind: string };
 
 export function findSecretsInText(content: string): Finding[] {
   const findings: Finding[] = [];
   const seen = new Set<string>();
 
-  function add(lineNo: number, s: string, entropy: number, kind: string) {
-    if (!seen.has(s) && !isSafe(s)) {
-      seen.add(s);
-      findings.push({ lineNo, s, entropy, kind });
-    }
-  }
-
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const lineNo = i + 1;
     const line = lines[i];
+    // Spans to skip entirely: SRI integrity hashes and URL host names.
+    const spans = [...sriSpans(line), ...urlHostSpans(line)];
+    // Candidates on this line, with their positions, so that a match lying
+    // inside a longer match (e.g. base64 inside a token) is reported once.
+    const candidates: (Finding & { start: number; end: number })[] = [];
+
+    const add = (s: string, entropy: number, kind: string, start = 0) => {
+      const end = start + s.length;
+      if (spans.some(([a, b]) => start >= a && end <= b)) return;
+      if (!isSafe(s)) {
+        candidates.push({ lineNo, s, entropy, kind, start, end });
+      }
+    };
 
     // Known secret prefixes: always reported (allowlist still applies later).
     // Their spans, plus public ID spans, are excluded from the entropy passes.
@@ -110,7 +154,7 @@ export function findSecretsInText(content: string): Finding[] {
       if (skipped(m)) continue;
       const s = m[0];
       const e = shannonEntropy(s, URLSAFE_CHARS);
-      if (e >= ENTROPY_THRESHOLD_B64) add(lineNo, s, e, "token");
+      if (e >= ENTROPY_THRESHOLD_B64) add(s, e, "token", m.index);
     }
 
     // Standard base64 (includes + and /)
@@ -122,7 +166,7 @@ export function findSecretsInText(content: string): Finding[] {
       const stripped = s.replace(/=+$/, "");
       if (stripped.includes("/") && PATH_LIKE.test(stripped)) continue;
       const e = shannonEntropy(stripped, BASE64_CHARS);
-      if (e >= ENTROPY_THRESHOLD_B64) add(lineNo, s, e, "base64");
+      if (e >= ENTROPY_THRESHOLD_B64) add(s, e, "base64", m.index);
     }
 
     // Hex strings (32+ chars)
@@ -130,21 +174,64 @@ export function findSecretsInText(content: string): Finding[] {
       if (skipped(m)) continue;
       const s = m[0];
       const e = shannonEntropy(s, HEX_CHARS);
-      if (e >= ENTROPY_THRESHOLD_HEX) add(lineNo, s, e, "hex");
+      if (e >= ENTROPY_THRESHOLD_HEX) add(s, e, "hex", m.index);
     }
+
+    candidates.forEach((c, ci) => {
+      const contained = candidates.some(
+        (o, oi) =>
+          oi !== ci &&
+          o.start <= c.start &&
+          o.end >= c.end &&
+          // strictly longer, or an identical span reported by an earlier pattern
+          (o.end - o.start > c.end - c.start || oi < ci)
+      );
+      if (contained || seen.has(c.s)) return;
+      seen.add(c.s);
+      findings.push({ lineNo: c.lineNo, s: c.s, entropy: c.entropy, kind: c.kind });
+    });
   }
 
   return findings;
 }
 
+const BINARY_SNIFF_BYTES = 8192;
+
+/**
+ * Returns true if the given content looks binary, i.e. it contains a NUL
+ * byte within its first 8192 bytes. Accepts a Buffer, Uint8Array or string.
+ */
+export function isBinaryContent(content: Buffer | Uint8Array | string): boolean {
+  if (typeof content === "string") {
+    return content.slice(0, BINARY_SNIFF_BYTES).includes("\0");
+  }
+  if (content instanceof Uint8Array) {
+    return content.subarray(0, BINARY_SNIFF_BYTES).includes(0);
+  }
+  throw new TypeError(
+    "isBinaryContent(content) expects a Buffer, Uint8Array or string"
+  );
+}
+
+/**
+ * Returns true if the file at `filePath` looks binary (NUL byte within its
+ * first 8192 bytes). Throws if the file cannot be read, and throws a
+ * TypeError if `filePath` is not a string; use `isBinaryContent` to check
+ * content you already have in memory.
+ */
 export function isBinary(filePath: string): boolean {
+  if (typeof filePath !== "string") {
+    throw new TypeError(
+      "isBinary(filePath) expects a file path string; " +
+        "use isBinaryContent(content) to check a Buffer or string"
+    );
+  }
+  const buf = Buffer.alloc(BINARY_SNIFF_BYTES);
+  const fd = openSync(filePath, "r");
   try {
-    const buf = Buffer.alloc(8192);
-    const fd = openSync(filePath, "r");
-    const bytesRead = readSync(fd, buf, 0, 8192, 0);
+    const bytesRead = readSync(fd, buf, 0, BINARY_SNIFF_BYTES, 0);
+    return isBinaryContent(buf.subarray(0, bytesRead));
+  } finally {
     closeSync(fd);
-    return buf.subarray(0, bytesRead).includes(0);
-  } catch {
-    return true;
   }
 }
