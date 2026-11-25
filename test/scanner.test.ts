@@ -75,7 +75,7 @@ describe("findSecretsInText", () => {
   });
 
   it("reports a token once, not also its base64 substring (issue #6)", () => {
-    const secret = "price_1AbCdEfGhIjKlMnOpQrStUv";
+    const secret = "key_1AbCdEfGhIjKlMnOpQrStUv";
     const findings = findSecretsInText(`id: ${secret}`);
     assert.deepEqual(
       findings.map((f) => [f.kind, f.s]),

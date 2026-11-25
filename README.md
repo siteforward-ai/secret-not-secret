@@ -1,6 +1,6 @@
 # @siteforward/secret-not-secret
 
-> Entropy-based secrets scanner for Git repos — detects high-entropy strings in staged or tracked files before they accidentally reach version control.
+> Entropy-based (plus a few known key prefixes) secrets scanner for Git repos — detects high-entropy strings in staged or tracked files before they accidentally reach version control.
 
 [![npm](https://img.shields.io/npm/v/@siteforward/secret-not-secret)](https://www.npmjs.com/package/@siteforward/secret-not-secret)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -12,7 +12,7 @@
 
 ## How It Works
 
-`secret-not-secret` uses [Shannon entropy](https://en.wikipedia.org/wiki/Entropy_(information_theory)) to identify strings that are statistically likely to be secrets — API keys, tokens, passwords, and cryptographic material — without relying on pattern matching or keyword lists.
+`secret-not-secret` uses [Shannon entropy](https://en.wikipedia.org/wiki/Entropy_(information_theory)) to identify strings that are statistically likely to be secrets — API keys, tokens, passwords, and cryptographic material. Entropy does the heavy lifting; a small built-in list of known key prefixes covers the few cases entropy alone misses (see [Known prefixes](#known-prefixes)).
 
 Strings are scored against three character sets:
 
@@ -24,7 +24,23 @@ Strings are scored against three character sets:
 
 Legitimate high-entropy values like UUIDs, git SHAs, and CSS custom properties are filtered out via a built-in safe-pattern list. Host names inside URLs (e.g. `https://abc123….lambda-url.us-east-1.on.aws/`) are also skipped; credentials, paths and query strings in URLs are still scanned.
 
-A value can match more than one kind (e.g. `price_1AbC...` is a `token`, and its `1AbC...` tail is also `base64`). When one match lies inside a longer match on the same line, only the longer one is reported.
+A value can match more than one kind (e.g. `key_1AbC...` is a `token`, and its `1AbC...` tail is also `base64`). When one match lies inside a longer match on the same line, only the longer one is reported.
+
+### Known prefixes
+
+Some secrets are short, low-entropy, or not token-shaped, so entropy alone misses them. These are **always reported**, regardless of entropy (a minimum body length after the prefix is required, so a bare prefix mentioned in docs is not flagged):
+
+| Kind | Matches |
+|------|---------|
+| `aws-key-id` | AWS access key IDs: `AKIA` / `ASIA` + 16 `A-Z 0-9` |
+| `private-key` | PEM headers: `-----BEGIN … PRIVATE KEY-----` (RSA, EC, OPENSSH, ENCRYPTED, …) |
+| `known-prefix` | Stripe `sk_live_…`, `rk_live_…` (10+ chars), Stripe webhook `whsec_…` (16+), GitHub `ghp_…`, `github_pat_…` (20+), Slack `xoxb-…`, `xoxp-…`, `xoxa-…` (10+), Anthropic `sk-ant-…` (20+) |
+
+Known-prefix findings still go through `not-secret-strings.txt` as usual.
+
+Conversely, these **public ID prefixes are never reported** as entropy findings, since they identify objects rather than grant access: Stripe `price_`, `prod_`, `we_` (webhook endpoint), `bpc_` (billing portal configuration).
+
+Both lists are exported as `KNOWN_SECRET_PATTERNS` and `PUBLIC_ID_PREFIXES`.
 
 When a finding is a known-safe value in your codebase, add it to **`not-secret-strings.txt`** — an allowlist file that maps file path patterns to strings that should never be flagged. Entries use [minimatch](https://github.com/isaacs/minimatch) glob syntax so a single entry can cover an entire directory or file type.
 
@@ -68,7 +84,7 @@ Exits with code `1` if potential secrets are found, `0` if clean. Files that can
 ### Example output
 
 ```
-# src/config.ts:15 [token, entropy=4.85]
+# src/config.ts:15 [known-prefix, entropy=4.85]
 src/config.ts	ghp_aB3dE5fG7hI9jK1lM2nO3pQ4rS5tU6vW7x
 
 Found 1 potential secret(s). Add to not-secret-strings.txt if safe.
@@ -124,7 +140,7 @@ test/**  testFixtureToken
 
 Filepath patterns use [minimatch](https://github.com/isaacs/minimatch) glob syntax.
 
-An entry also covers any substring of itself, so allowlisting `price_1AbCdEfGhIjKlMnOpQrStUv` also allowlists `1AbCdEfGhIjKlMnOpQrStUv` in the same files.
+An entry also covers any substring of itself, so allowlisting `key_1AbCdEfGhIjKlMnOpQrStUv` also allowlists `1AbCdEfGhIjKlMnOpQrStUv` in the same files.
 
 ---
 
