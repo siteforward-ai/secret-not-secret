@@ -26,7 +26,7 @@ Legitimate high-entropy values like UUIDs, git SHAs, URLs, and CSS custom proper
 
 When a finding is a known-safe value in your codebase, add it to **`not-secret-strings.txt`** — an allowlist file that maps file path patterns to strings that should never be flagged. Entries use [minimatch](https://github.com/isaacs/minimatch) glob syntax so a single entry can cover an entire directory or file type.
 
-Some files should never be scanned at all (generated bundles, lockfiles, test fixtures, etc.). List those path patterns in **`not-secret-paths.txt`** and `scan-secrets` will skip them entirely. Git-ignored files are also skipped automatically.
+Some files should never be scanned at all (generated bundles, lockfiles, test fixtures, etc.). List those path patterns in **`not-secret-paths.txt`** and `scan-secrets` will skip them entirely. Git-ignored files are also skipped automatically. The allowlist and excluded-paths files themselves (the defaults, or whatever `--whitelist` / `--excluded-paths` point to) are always skipped, so their entries are never flagged.
 
 ---
 
@@ -80,14 +80,22 @@ The most common use case is scanning staged files before every commit. Add this 
 
 ```bash
 #!/bin/sh
-npx scan-secrets --staged
+npx --no-install scan-secrets --staged
 ```
 
 Or with [husky](https://typicode.github.io/husky/):
 
 ```bash
-npx husky add .husky/pre-commit "npx scan-secrets --staged"
+npx husky add .husky/pre-commit "npx --no-install scan-secrets --staged"
 ```
+
+For a one-off scan without adding the package to your project:
+
+```bash
+npx -p @siteforward/secret-not-secret scan-secrets --all
+```
+
+> **Why not plain `npx scan-secrets`?** If the package isn't installed locally, `npx` resolves `scan-secrets` as a registry package name: an unrelated package that anyone could publish under that name. `--no-install` makes the hook fail instead of downloading it, and `-p @siteforward/secret-not-secret` names the exact package to fetch.
 
 ---
 
