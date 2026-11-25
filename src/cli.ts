@@ -12,17 +12,20 @@
  *   --whitelist <path>       Path to whitelist file (default: not-secret-strings.txt)
  *   --excluded-paths <path>  Path to excluded-paths file (default: not-secret-paths.txt)
  *
+ * Exit codes: 0 = clean, 1 = potential secrets found,
+ *             2 = no secrets found, but some files could not be read (not scanned)
+ *
  * Whitelist format (not-secret-strings.txt):
  *   Each non-comment line: filepath<whitespace>secret_string
  *   A filepath of '*' matches any file.
  */
 
 import { readFileSync } from "fs";
-import { resolve, relative } from "path";
-import { findSecretsInText, isBinary } from "./scanner.js";
+import { resolve, relative, sep } from "path";
+import { findSecretsInText, isBinaryContent } from "./scanner.js";
 import { loadWhitelist, isWhitelisted } from "./whitelist.js";
-import { loadExcludedPaths, isExcluded } from "./paths.js";
-import { gitLsFiles, gitStagedFiles } from "./git.js";
+import { loadExcludedPaths, isExcluded, isConfigFile, isLockfile } from "./paths.js";
+import { gitLsFiles, gitStagedFiles, gitShowStaged } from "./git.js";
 import type { WhitelistEntry } from "./whitelist.js";
 
 const REPO_ROOT = process.cwd();
@@ -38,20 +41,20 @@ type FileFinding = {
 function scanFile(
   filePath: string,
   whitelist: WhitelistEntry[],
-  excluded: string[]
+  excluded: string[],
+  staged = false
 ): FileFinding[] {
   if (isExcluded(filePath, excluded, REPO_ROOT)) return [];
-  if (isBinary(filePath)) return [];
-
-  let content: string;
-  try {
-    content = readFileSync(filePath, "utf8");
-  } catch (err) {
-    process.stderr.write(`Warning: could not read ${filePath}: ${err}\n`);
-    return [];
-  }
 
   const rel = relative(REPO_ROOT, resolve(filePath));
+  // Read once; throws if the content cannot be read (reported by the caller).
+  // In staged mode scan the index version, not the working tree copy.
+  const buf = staged
+    ? gitShowStaged(REPO_ROOT, rel.split(sep).join("/"))
+    : readFileSync(filePath);
+  if (isBinaryContent(buf)) return [];
+  const content = buf.toString("utf8");
+
   return findSecretsInText(content)
     .filter(({ s }) => !isWhitelisted(rel, s, whitelist))
     .map(({ lineNo, s, entropy, kind }) => ({ rel, lineNo, s, entropy, kind }));
@@ -77,10 +80,12 @@ function main(): number {
   }
 
   let files: string[];
+  const staged =
+    !filteredArgs.includes("--all") && filteredArgs.includes("--staged");
   if (filteredArgs.includes("--all")) {
-    files = gitLsFiles(REPO_ROOT);
+    files = gitLsFiles(REPO_ROOT).filter((f) => !isLockfile(f));
   } else if (filteredArgs.includes("--staged")) {
-    files = gitStagedFiles(REPO_ROOT);
+    files = gitStagedFiles(REPO_ROOT).filter((f) => !isLockfile(f));
   } else if (filteredArgs.length > 0) {
     files = filteredArgs.map((f) => resolve(f));
   } else {
@@ -95,11 +100,31 @@ function main(): number {
   const excluded = loadExcludedPaths(excludedPathsPath);
 
   const allFindings: FileFinding[] = [];
+  // Never scan the allowlist / excluded-paths files themselves: they hold
+  // allowed values by design and would otherwise flag every entry.
+  const configFiles = [whitelistPath, excludedPathsPath];
+  const unreadable: string[] = [];
   for (const filePath of files) {
-    allFindings.push(...scanFile(filePath, whitelist, excluded));
+    if (isConfigFile(filePath, configFiles)) continue;
+    try {
+      allFindings.push(...scanFile(filePath, whitelist, excluded, staged));
+    } catch (err) {
+      unreadable.push(filePath);
+      const reason = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `Error: could not read ${relative(REPO_ROOT, resolve(filePath))}, not scanned: ${reason}\n`
+      );
+    }
   }
 
-  if (allFindings.length === 0) return 0;
+  // Exit codes: 0 = clean, 1 = potential secrets found,
+  // 2 = no secrets found but one or more files could not be read/scanned.
+  const unreadableExit = unreadable.length > 0 ? 2 : 0;
+  if (unreadable.length > 0) {
+    process.stderr.write(`${unreadable.length} file(s) could not be scanned.\n`);
+  }
+
+  if (allFindings.length === 0) return unreadableExit;
 
   if (listMode) {
     // Output unique (filepath, secret) pairs ready to paste into not-secret-strings.txt
