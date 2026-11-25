@@ -1,6 +1,6 @@
 # @siteforward/secret-not-secret
 
-> Entropy-based secrets scanner for Git repos — detects high-entropy strings in staged or tracked files before they accidentally reach version control.
+> Entropy-based (plus a few known key prefixes) secrets scanner for Git repos — detects high-entropy strings in staged or tracked files before they accidentally reach version control.
 
 [![npm](https://img.shields.io/npm/v/@siteforward/secret-not-secret)](https://www.npmjs.com/package/@siteforward/secret-not-secret)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -12,7 +12,7 @@
 
 ## How It Works
 
-`secret-not-secret` uses [Shannon entropy](https://en.wikipedia.org/wiki/Entropy_(information_theory)) to identify strings that are statistically likely to be secrets — API keys, tokens, passwords, and cryptographic material — without relying on pattern matching or keyword lists.
+`secret-not-secret` uses [Shannon entropy](https://en.wikipedia.org/wiki/Entropy_(information_theory)) to identify strings that are statistically likely to be secrets — API keys, tokens, passwords, and cryptographic material. Entropy does the heavy lifting; a small built-in list of known key prefixes covers the few cases entropy alone misses (see [Known prefixes](#known-prefixes)).
 
 Strings are scored against three character sets:
 
@@ -22,11 +22,29 @@ Strings are scored against three character sets:
 | `base64` | Standard base64 (+ `/`) | 4.3 bits/char | 20 chars |
 | `hex` | Hex (`0-9 a-f`) | 3.7 bits/char | 32 chars |
 
-Legitimate high-entropy values like UUIDs, git SHAs, URLs, and CSS custom properties are filtered out via a built-in safe-pattern list.
+Legitimate high-entropy values like UUIDs, git SHAs, and CSS custom properties are filtered out via a built-in safe-pattern list. Host names inside URLs (e.g. `https://abc123….lambda-url.us-east-1.on.aws/`) are also skipped; credentials, paths and query strings in URLs are still scanned.
+
+A value can match more than one kind (e.g. `key_1AbC...` is a `token`, and its `1AbC...` tail is also `base64`). When one match lies inside a longer match on the same line, only the longer one is reported.
+
+### Known prefixes
+
+Some secrets are short, low-entropy, or not token-shaped, so entropy alone misses them. These are **always reported**, regardless of entropy (a minimum body length after the prefix is required, so a bare prefix mentioned in docs is not flagged):
+
+| Kind | Matches |
+|------|---------|
+| `aws-key-id` | AWS access key IDs: `AKIA` / `ASIA` + 16 `A-Z 0-9` |
+| `private-key` | PEM headers: `-----BEGIN … PRIVATE KEY-----` (RSA, EC, OPENSSH, ENCRYPTED, …) |
+| `known-prefix` | Stripe `sk_live_…`, `rk_live_…` (10+ chars), Stripe webhook `whsec_…` (16+), GitHub `ghp_…`, `github_pat_…` (20+), Slack `xoxb-…`, `xoxp-…`, `xoxa-…` (10+), Anthropic `sk-ant-…` (20+) |
+
+Known-prefix findings still go through `not-secret-strings.txt` as usual.
+
+Conversely, these **public ID prefixes are never reported** as entropy findings, since they identify objects rather than grant access: Stripe `price_`, `prod_`, `we_` (webhook endpoint), `bpc_` (billing portal configuration).
+
+Both lists are exported as `KNOWN_SECRET_PATTERNS` and `PUBLIC_ID_PREFIXES`.
 
 When a finding is a known-safe value in your codebase, add it to **`not-secret-strings.txt`** — an allowlist file that maps file path patterns to strings that should never be flagged. Entries use [minimatch](https://github.com/isaacs/minimatch) glob syntax so a single entry can cover an entire directory or file type.
 
-Some files should never be scanned at all (generated bundles, lockfiles, test fixtures, etc.). List those path patterns in **`not-secret-paths.txt`** and `scan-secrets` will skip them entirely. Git-ignored files are also skipped automatically.
+Some files should never be scanned at all (generated bundles, lockfiles, test fixtures, etc.). List those path patterns in **`not-secret-paths.txt`** and `scan-secrets` will skip them entirely. Git-ignored files are also skipped automatically. The allowlist and excluded-paths files themselves (the defaults, or whatever `--whitelist` / `--excluded-paths` point to) are always skipped, so their entries are never flagged.
 
 ---
 
@@ -41,7 +59,7 @@ npm install --save-dev @siteforward/secret-not-secret
 ## CLI Usage
 
 ```
-scan-secrets [--all | --staged | file1 file2 ...] [--list]
+scan-secrets [--all | --staged | --history [<rev-range>] | file1 file2 ...] [--list]
              [--whitelist <path>] [--excluded-paths <path>]
 ```
 
@@ -51,6 +69,7 @@ scan-secrets [--all | --staged | file1 file2 ...] [--list]
 |------|-------------|
 | `--staged` | Scan only staged files — ideal for a pre-commit hook |
 | `--all` | Scan all git-tracked files |
+| `--history [<rev-range>]` | Scan every version of every file, and every commit message, in git history (default: all commits reachable from any ref). See [Scanning history](#scanning-history) |
 | `file1 file2 ...` | Scan specific files |
 
 ### Options
@@ -61,16 +80,47 @@ scan-secrets [--all | --staged | file1 file2 ...] [--list]
 | `--excluded-paths <path>` | `not-secret-paths.txt` | Path to path-exclusion file |
 | `--list` | — | Output findings in whitelist-ready format |
 
-Exits with code `1` if potential secrets are found, `0` if clean.
+Exits with code `1` if potential secrets are found, `0` if clean. Files that cannot be read (missing, permission denied, etc.) are reported on stderr as "not scanned"; if any file could not be scanned and no secrets were found, the exit code is `2`.
 
 ### Example output
 
 ```
-# src/config.ts:15 [token, entropy=4.85]
+# src/config.ts:15 [known-prefix, entropy=4.85]
 src/config.ts	ghp_aB3dE5fG7hI9jK1lM2nO3pQ4rS5tU6vW7x
 
 Found 1 potential secret(s). Add to not-secret-strings.txt if safe.
 ```
+
+---
+
+## Scanning history
+
+Before making a private repository public, scan everything that has ever been committed, not just the current files:
+
+```bash
+scan-secrets --history                    # every commit reachable from any branch or tag
+scan-secrets --history main~10..main      # only commits in a rev-range
+scan-secrets --history=v1.0..HEAD         # same, "=" form
+```
+
+`--history` reads every version of every file in the selected commits (each unique blob is read and scanned once, via `git cat-file --batch`) and every commit message. The allowlist, `not-secret-paths.txt`, default lockfile skipping and the allowlist/excluded-paths files themselves apply as usual, matched against the file's path relative to the repository root. Binary blobs are skipped.
+
+Each finding names the commit where the value first appears in that file, and whether HEAD's version of the file still contains it. Secrets in commit messages are reported under the pseudo-path `<commit-message>`:
+
+```
+# config.env:2 [known-prefix, entropy=4.98] first seen in 1a2b3c4, removed
+config.env  ghp_aB3dE5fG7hI9jK1lM2nO3pQ4rS5tU6vW7x
+# src/keys.ts:8 [token, entropy=4.61] first seen in 5d6e7f8, still in HEAD
+src/keys.ts  Zq8Wm2Xk5Lp9Rt3Vn7Bc1Hd4Jf6Gs0Ya2Ue
+# <commit-message>:3 [token, entropy=4.52] in commit 9a8b7c6
+<commit-message>  Mn4Bv7Cx1Zl9Kj3Hg6Fd2Sa5Qw8Er0Ty4Ui
+
+Found 3 potential secret(s) in history. ...
+```
+
+The `path  value` lines can be pasted into `not-secret-strings.txt` as usual (an entry for `<commit-message>` or `*` covers commit messages). `--list` prints only those lines. A secret marked `removed` is still public once the history is published: rotate it, or rewrite history (e.g. with `git filter-repo`) before publishing.
+
+The rev-range is passed to `git log` as a single revision argument and must not start with `-`. Exit codes are the same as for other modes: `0` clean, `1` findings, `2` no findings but some blobs could not be read (or git could not resolve the rev-range).
 
 ---
 
@@ -80,14 +130,22 @@ The most common use case is scanning staged files before every commit. Add this 
 
 ```bash
 #!/bin/sh
-npx scan-secrets --staged
+npx --no-install scan-secrets --staged
 ```
 
 Or with [husky](https://typicode.github.io/husky/):
 
 ```bash
-npx husky add .husky/pre-commit "npx scan-secrets --staged"
+npx husky add .husky/pre-commit "npx --no-install scan-secrets --staged"
 ```
+
+For a one-off scan without adding the package to your project:
+
+```bash
+npx -p @siteforward/secret-not-secret scan-secrets --all
+```
+
+> **Why not plain `npx scan-secrets`?** If the package isn't installed locally, `npx` resolves `scan-secrets` as a registry package name: an unrelated package that anyone could publish under that name. `--no-install` makes the hook fail instead of downloading it, and `-p @siteforward/secret-not-secret` names the exact package to fetch.
 
 ---
 
@@ -114,6 +172,8 @@ test/**  testFixtureToken
 
 Filepath patterns use [minimatch](https://github.com/isaacs/minimatch) glob syntax.
 
+An entry also covers any substring of itself, so allowlisting `key_1AbCdEfGhIjKlMnOpQrStUv` also allowlists `1AbCdEfGhIjKlMnOpQrStUv` in the same files.
+
 ---
 
 ## Excluding Paths
@@ -130,6 +190,16 @@ tests/
 *.map
 ```
 
+### Lockfiles are skipped by default
+
+When scanning with `--all` or `--staged`, these lockfiles are skipped automatically (matched by file name in any directory):
+
+`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `Cargo.lock`, `Gemfile.lock`, `poetry.lock`, `composer.lock`, `go.sum`
+
+To scan a lockfile anyway, pass it explicitly by name, e.g. `scan-secrets package-lock.json`.
+
+Subresource Integrity strings (`sha512-…`, `sha384-…`, `sha256-…`, `sha1-…`) are also treated as safe wherever they appear, so integrity hashes never show up as findings.
+
 ---
 
 ## Programmatic API
@@ -139,6 +209,7 @@ import {
   findSecretsInText,
   isSafe,
   isBinary,
+  isBinaryContent,
   loadWhitelist,
   isWhitelisted,
   loadExcludedPaths,
@@ -162,7 +233,20 @@ if (!isSafe(someString)) {
 // Load and apply a whitelist
 const whitelist = loadWhitelist('not-secret-strings.txt');
 const safe = isWhitelisted('src/config.ts', 'myValue', whitelist);
+
+// Binary detection (a NUL byte in the first 8192 bytes means binary)
+isBinary('path/to/file');        // takes a file PATH; throws if the file can't be read
+isBinaryContent(buffer);         // takes CONTENT: Buffer | Uint8Array | string
 ```
+
+| Function | Takes | Notes |
+| --- | --- | --- |
+| `findSecretsInText(content)` | file content (`string`) | returns `Finding[]` |
+| `isSafe(s)` | a candidate string | `true` if it is unambiguously not a secret |
+| `isBinary(filePath)` | a file path (`string`) | reads the file; throws on read errors, `TypeError` if not given a string |
+| `isBinaryContent(content)` | `Buffer \| Uint8Array \| string` | pure check, no I/O |
+| `loadWhitelist(path)` / `loadExcludedPaths(path)` | a file path | |
+| `isWhitelisted(relPath, s, entries)` | repo-relative path, string, entries | |
 
 ---
 
