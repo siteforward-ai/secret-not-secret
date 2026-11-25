@@ -3,5 +3,11 @@ export { findSecretsInText, isSafe, isBinary } from "./scanner.js";
 export type { Finding } from "./scanner.js";
 export { loadWhitelist, isWhitelisted, matchesPattern } from "./whitelist.js";
 export type { WhitelistEntry } from "./whitelist.js";
-export { loadExcludedPaths, isExcluded, isConfigFile } from "./paths.js";
+export {
+  loadExcludedPaths,
+  isExcluded,
+  isConfigFile,
+  isLockfile,
+  DEFAULT_LOCKFILES,
+} from "./paths.js";
 export { gitLsFiles, gitStagedFiles } from "./git.js";

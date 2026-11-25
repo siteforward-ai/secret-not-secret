@@ -138,6 +138,16 @@ tests/
 *.map
 ```
 
+### Lockfiles are skipped by default
+
+When scanning with `--all` or `--staged`, these lockfiles are skipped automatically (matched by file name in any directory):
+
+`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `Cargo.lock`, `Gemfile.lock`, `poetry.lock`, `composer.lock`, `go.sum`
+
+To scan a lockfile anyway, pass it explicitly by name, e.g. `scan-secrets package-lock.json`.
+
+Subresource Integrity strings (`sha512-…`, `sha384-…`, `sha256-…`, `sha1-…`) are also treated as safe wherever they appear, so integrity hashes never show up as findings.
+
 ---
 
 ## Programmatic API
