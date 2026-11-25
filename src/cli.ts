@@ -21,11 +21,11 @@
  */
 
 import { readFileSync } from "fs";
-import { resolve, relative } from "path";
+import { resolve, relative, sep } from "path";
 import { findSecretsInText, isBinaryContent } from "./scanner.js";
 import { loadWhitelist, isWhitelisted } from "./whitelist.js";
-import { loadExcludedPaths, isExcluded } from "./paths.js";
-import { gitLsFiles, gitStagedFiles } from "./git.js";
+import { loadExcludedPaths, isExcluded, isConfigFile, isLockfile } from "./paths.js";
+import { gitLsFiles, gitStagedFiles, gitShowStaged } from "./git.js";
 import type { WhitelistEntry } from "./whitelist.js";
 
 const REPO_ROOT = process.cwd();
@@ -41,16 +41,20 @@ type FileFinding = {
 function scanFile(
   filePath: string,
   whitelist: WhitelistEntry[],
-  excluded: string[]
+  excluded: string[],
+  staged = false
 ): FileFinding[] {
   if (isExcluded(filePath, excluded, REPO_ROOT)) return [];
 
-  // Read once; throws if the file cannot be read (reported by the caller).
-  const buf = readFileSync(filePath);
+  const rel = relative(REPO_ROOT, resolve(filePath));
+  // Read once; throws if the content cannot be read (reported by the caller).
+  // In staged mode scan the index version, not the working tree copy.
+  const buf = staged
+    ? gitShowStaged(REPO_ROOT, rel.split(sep).join("/"))
+    : readFileSync(filePath);
   if (isBinaryContent(buf)) return [];
   const content = buf.toString("utf8");
 
-  const rel = relative(REPO_ROOT, resolve(filePath));
   return findSecretsInText(content)
     .filter(({ s }) => !isWhitelisted(rel, s, whitelist))
     .map(({ lineNo, s, entropy, kind }) => ({ rel, lineNo, s, entropy, kind }));
@@ -76,10 +80,12 @@ function main(): number {
   }
 
   let files: string[];
+  const staged =
+    !filteredArgs.includes("--all") && filteredArgs.includes("--staged");
   if (filteredArgs.includes("--all")) {
-    files = gitLsFiles(REPO_ROOT);
+    files = gitLsFiles(REPO_ROOT).filter((f) => !isLockfile(f));
   } else if (filteredArgs.includes("--staged")) {
-    files = gitStagedFiles(REPO_ROOT);
+    files = gitStagedFiles(REPO_ROOT).filter((f) => !isLockfile(f));
   } else if (filteredArgs.length > 0) {
     files = filteredArgs.map((f) => resolve(f));
   } else {
@@ -94,10 +100,14 @@ function main(): number {
   const excluded = loadExcludedPaths(excludedPathsPath);
 
   const allFindings: FileFinding[] = [];
+  // Never scan the allowlist / excluded-paths files themselves: they hold
+  // allowed values by design and would otherwise flag every entry.
+  const configFiles = [whitelistPath, excludedPathsPath];
   const unreadable: string[] = [];
   for (const filePath of files) {
+    if (isConfigFile(filePath, configFiles)) continue;
     try {
-      allFindings.push(...scanFile(filePath, whitelist, excluded));
+      allFindings.push(...scanFile(filePath, whitelist, excluded, staged));
     } catch (err) {
       unreadable.push(filePath);
       const reason = err instanceof Error ? err.message : String(err);

@@ -73,6 +73,31 @@ describe("findSecretsInText", () => {
     assert.ok(findings.length > 0);
     assert.equal(findings[0].lineNo, 3);
   });
+
+  it("ignores SRI / lockfile integrity hashes", () => {
+    const content = [
+      '"integrity": "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+5gzOkdMC5Uk5nb7v+8GqbeQ6R7dw5o+3ufJGQ==",',
+      '"integrity": "sha384-oqVuAfXRKap7fdgcCY5uykM6+R9GqQ8K/uxy9rx7HNQlGYl1kPzQho1wx4JwY8wC",',
+      "integrity sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+      "integrity sha1-QuMSd5sH8C1dK1lcn6kfAMVH8M8=",
+    ].join("\n");
+    assert.deepEqual(findSecretsInText(content), []);
+  });
+
+  it("still detects secrets on a line containing an SRI hash", () => {
+    const secret = "ghp_aB3dE5fG7hI9jK1lM2nO3pQ4rS5tU6vW7x";
+    const content = `sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+5gzOkdMC5Uk5nb7v+8GqbeQ6R7dw5o+3ufJGQ== ${secret}`;
+    const findings = findSecretsInText(content);
+    assert.ok(findings.some((f) => f.s === secret));
+    assert.ok(!findings.some((f) => f.s.includes("v2kDEe57")));
+  });
+
+  it("still detects the same base64 payload without an SRI prefix", () => {
+    const findings = findSecretsInText(
+      "key = v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+5gzOkdMC5Uk5nb7v+8GqbeQ6R7dw5o+3ufJGQ=="
+    );
+    assert.ok(findings.length > 0);
+  });
 });
 
 describe("isBinaryContent", () => {

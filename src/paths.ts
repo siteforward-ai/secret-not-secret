@@ -27,3 +27,36 @@ export function isExcluded(
   }
   return false;
 }
+
+/**
+ * True when `filePath` is one of the scanner's own config files (the
+ * allowlist or excluded-paths file). These files hold allowed values by
+ * design, so they must never be scanned. Paths are compared after resolving
+ * them to absolute paths.
+ */
+export function isConfigFile(filePath: string, configFiles: string[]): boolean {
+  const abs = resolve(filePath);
+  return configFiles.some((f) => resolve(f) === abs);
+}
+
+/**
+ * Lockfiles skipped by default when scanning via `--all` / `--staged`.
+ * Matched by basename in any directory. Files named explicitly on the
+ * command line are still scanned.
+ */
+export const DEFAULT_LOCKFILES: readonly string[] = [
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "bun.lock",
+  "Cargo.lock",
+  "Gemfile.lock",
+  "poetry.lock",
+  "composer.lock",
+  "go.sum",
+];
+
+export function isLockfile(filePath: string): boolean {
+  return DEFAULT_LOCKFILES.includes(basename(filePath));
+}
