@@ -73,6 +73,32 @@ describe("findSecretsInText", () => {
     assert.ok(findings.length > 0);
     assert.equal(findings[0].lineNo, 3);
   });
+
+  it("reports a token once, not also its base64 substring (issue #6)", () => {
+    const secret = "price_1AbCdEfGhIjKlMnOpQrStUv";
+    const findings = findSecretsInText(`id: ${secret}`);
+    assert.deepEqual(
+      findings.map((f) => [f.kind, f.s]),
+      [["token", secret]]
+    );
+  });
+
+  it("keeps the longer base64 match when a token lies inside it", () => {
+    const secret = "aB3dE5fG7hI9jK1lM2nO+3pQ4rS5tU6vW7x/yZ8";
+    const findings = findSecretsInText(`key=${secret}`);
+    assert.deepEqual(
+      findings.map((f) => [f.kind, f.s]),
+      [["base64", secret]]
+    );
+  });
+
+  it("still reports separate non-overlapping values on one line", () => {
+    const a = "ghp_aB3dE5fG7hI9jK1lM2nO3pQ4rS5tU6vW7x";
+    const b = "Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Ji1Hg0Fe";
+    const findings = findSecretsInText(`a=${a} b=${b}`);
+    assert.ok(findings.some((f) => f.s === a));
+    assert.ok(findings.some((f) => f.s === b));
+  });
   describe("URL hosts", () => {
     it("does not flag a Lambda function URL host", () => {
       const findings = findSecretsInText(

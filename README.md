@@ -24,6 +24,8 @@ Strings are scored against three character sets:
 
 Legitimate high-entropy values like UUIDs, git SHAs, and CSS custom properties are filtered out via a built-in safe-pattern list. Host names inside URLs (e.g. `https://abc123….lambda-url.us-east-1.on.aws/`) are also skipped; credentials, paths and query strings in URLs are still scanned.
 
+A value can match more than one kind (e.g. `price_1AbC...` is a `token`, and its `1AbC...` tail is also `base64`). When one match lies inside a longer match on the same line, only the longer one is reported.
+
 When a finding is a known-safe value in your codebase, add it to **`not-secret-strings.txt`** — an allowlist file that maps file path patterns to strings that should never be flagged. Entries use [minimatch](https://github.com/isaacs/minimatch) glob syntax so a single entry can cover an entire directory or file type.
 
 Some files should never be scanned at all (generated bundles, lockfiles, test fixtures, etc.). List those path patterns in **`not-secret-paths.txt`** and `scan-secrets` will skip them entirely. Git-ignored files are also skipped automatically. The allowlist and excluded-paths files themselves (the defaults, or whatever `--whitelist` / `--excluded-paths` point to) are always skipped, so their entries are never flagged.
@@ -121,6 +123,8 @@ test/**  testFixtureToken
 ```
 
 Filepath patterns use [minimatch](https://github.com/isaacs/minimatch) glob syntax.
+
+An entry also covers any substring of itself, so allowlisting `price_1AbCdEfGhIjKlMnOpQrStUv` also allowlists `1AbCdEfGhIjKlMnOpQrStUv` in the same files.
 
 ---
 

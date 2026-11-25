@@ -106,4 +106,18 @@ describe("isWhitelisted", () => {
   it("returns false for empty whitelist", () => {
     assert.ok(!isWhitelisted("src/config.ts", "anySecret", []));
   });
+
+  it("returns true for a substring of an allowlisted value", () => {
+    const wl = [
+      { pathPattern: "src/prices.ts", secret: "price_1AbCdEfGhIjKlMnOpQrStUv" },
+      { pathPattern: "*", secret: "tok_9ZyXwVuTsRqPoNmLkJiHgF" },
+    ];
+    assert.ok(isWhitelisted("src/prices.ts", "1AbCdEfGhIjKlMnOpQrStUv", wl));
+    assert.ok(isWhitelisted("any/file.ts", "9ZyXwVuTsRqPoNmLkJiHgF", wl));
+    assert.ok(!isWhitelisted("src/other.ts", "1AbCdEfGhIjKlMnOpQrStUv", wl));
+  });
+
+  it("does not treat a superstring of an allowlisted value as allowlisted", () => {
+    assert.ok(!isWhitelisted("src/config.ts", "secretABCextra", whitelist));
+  });
 });

@@ -76,29 +76,23 @@ export function findSecretsInText(content: string): Finding[] {
   const findings: Finding[] = [];
   const seen = new Set<string>();
 
-  let spans: Array<[number, number]> = [];
-
-  function add(
-    lineNo: number,
-    m: RegExpMatchArray,
-    s: string,
-    entropy: number,
-    kind: string
-  ) {
-    const start = m.index!;
-    const end = start + m[0].length;
-    if (spans.some(([a, b]) => start >= a && end <= b)) return;
-    if (!seen.has(s) && !isSafe(s)) {
-      seen.add(s);
-      findings.push({ lineNo, s, entropy, kind });
-    }
-  }
-
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const lineNo = i + 1;
     const line = lines[i];
-    spans = [...sriSpans(line), ...urlHostSpans(line)];
+    // Spans to skip entirely: SRI integrity hashes and URL host names.
+    const spans = [...sriSpans(line), ...urlHostSpans(line)];
+    // Candidates on this line, with their positions, so that a match lying
+    // inside a longer match (e.g. base64 inside a token) is reported once.
+    const candidates: (Finding & { start: number; end: number })[] = [];
+
+    const add = (s: string, entropy: number, kind: string, start = 0) => {
+      const end = start + s.length;
+      if (spans.some(([a, b]) => start >= a && end <= b)) return;
+      if (!isSafe(s)) {
+        candidates.push({ lineNo, s, entropy, kind, start, end });
+      }
+    };
 
     // URL-safe base64 / JWT / API tokens (alphanumeric + hyphen + underscore)
     for (const m of line.matchAll(
@@ -106,7 +100,7 @@ export function findSecretsInText(content: string): Finding[] {
     )) {
       const s = m[0];
       const e = shannonEntropy(s, URLSAFE_CHARS);
-      if (e >= ENTROPY_THRESHOLD_B64) add(lineNo, m, s, e, "token");
+      if (e >= ENTROPY_THRESHOLD_B64) add(s, e, "token", m.index);
     }
 
     // Standard base64 (includes + and /)
@@ -117,15 +111,29 @@ export function findSecretsInText(content: string): Finding[] {
       const stripped = s.replace(/=+$/, "");
       if (stripped.includes("/") && PATH_LIKE.test(stripped)) continue;
       const e = shannonEntropy(stripped, BASE64_CHARS);
-      if (e >= ENTROPY_THRESHOLD_B64) add(lineNo, m, s, e, "base64");
+      if (e >= ENTROPY_THRESHOLD_B64) add(s, e, "base64", m.index);
     }
 
     // Hex strings (32+ chars)
     for (const m of line.matchAll(/[0-9a-fA-F]{32,}/g)) {
       const s = m[0];
       const e = shannonEntropy(s, HEX_CHARS);
-      if (e >= ENTROPY_THRESHOLD_HEX) add(lineNo, m, s, e, "hex");
+      if (e >= ENTROPY_THRESHOLD_HEX) add(s, e, "hex", m.index);
     }
+
+    candidates.forEach((c, ci) => {
+      const contained = candidates.some(
+        (o, oi) =>
+          oi !== ci &&
+          o.start <= c.start &&
+          o.end >= c.end &&
+          // strictly longer, or an identical span reported by an earlier pattern
+          (o.end - o.start > c.end - c.start || oi < ci)
+      );
+      if (contained || seen.has(c.s)) return;
+      seen.add(c.s);
+      findings.push({ lineNo: c.lineNo, s: c.s, entropy: c.entropy, kind: c.kind });
+    });
   }
 
   return findings;
