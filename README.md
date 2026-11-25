@@ -26,7 +26,7 @@ Legitimate high-entropy values like UUIDs, git SHAs, URLs, and CSS custom proper
 
 When a finding is a known-safe value in your codebase, add it to **`not-secret-strings.txt`** — an allowlist file that maps file path patterns to strings that should never be flagged. Entries use [minimatch](https://github.com/isaacs/minimatch) glob syntax so a single entry can cover an entire directory or file type.
 
-Some files should never be scanned at all (generated bundles, lockfiles, test fixtures, etc.). List those path patterns in **`not-secret-paths.txt`** and `scan-secrets` will skip them entirely. Git-ignored files are also skipped automatically.
+Some files should never be scanned at all (generated bundles, lockfiles, test fixtures, etc.). List those path patterns in **`not-secret-paths.txt`** and `scan-secrets` will skip them entirely. Git-ignored files are also skipped automatically. The allowlist and excluded-paths files themselves (the defaults, or whatever `--whitelist` / `--excluded-paths` point to) are always skipped, so their entries are never flagged.
 
 ---
 

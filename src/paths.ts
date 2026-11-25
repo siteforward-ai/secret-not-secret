@@ -27,3 +27,14 @@ export function isExcluded(
   }
   return false;
 }
+
+/**
+ * True when `filePath` is one of the scanner's own config files (the
+ * allowlist or excluded-paths file). These files hold allowed values by
+ * design, so they must never be scanned. Paths are compared after resolving
+ * them to absolute paths.
+ */
+export function isConfigFile(filePath: string, configFiles: string[]): boolean {
+  const abs = resolve(filePath);
+  return configFiles.some((f) => resolve(f) === abs);
+}
