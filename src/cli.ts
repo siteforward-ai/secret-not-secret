@@ -18,11 +18,11 @@
  */
 
 import { readFileSync } from "fs";
-import { resolve, relative } from "path";
-import { findSecretsInText, isBinary } from "./scanner.js";
+import { resolve, relative, sep } from "path";
+import { findSecretsInText, isBinary, isBinaryContent } from "./scanner.js";
 import { loadWhitelist, isWhitelisted } from "./whitelist.js";
 import { loadExcludedPaths, isExcluded, isConfigFile } from "./paths.js";
-import { gitLsFiles, gitStagedFiles } from "./git.js";
+import { gitLsFiles, gitStagedFiles, gitShowStaged } from "./git.js";
 import type { WhitelistEntry } from "./whitelist.js";
 
 const REPO_ROOT = process.cwd();
@@ -38,20 +38,34 @@ type FileFinding = {
 function scanFile(
   filePath: string,
   whitelist: WhitelistEntry[],
-  excluded: string[]
+  excluded: string[],
+  staged = false
 ): FileFinding[] {
   if (isExcluded(filePath, excluded, REPO_ROOT)) return [];
-  if (isBinary(filePath)) return [];
-
-  let content: string;
-  try {
-    content = readFileSync(filePath, "utf8");
-  } catch (err) {
-    process.stderr.write(`Warning: could not read ${filePath}: ${err}\n`);
-    return [];
-  }
 
   const rel = relative(REPO_ROOT, resolve(filePath));
+  let content: string;
+  if (staged) {
+    // Scan the index version, not the working tree copy.
+    let buf: Buffer;
+    try {
+      buf = gitShowStaged(REPO_ROOT, rel.split(sep).join("/"));
+    } catch (err) {
+      process.stderr.write(`Warning: could not read staged ${rel}: ${err}\n`);
+      return [];
+    }
+    if (isBinaryContent(buf)) return [];
+    content = buf.toString("utf8");
+  } else {
+    if (isBinary(filePath)) return [];
+    try {
+      content = readFileSync(filePath, "utf8");
+    } catch (err) {
+      process.stderr.write(`Warning: could not read ${filePath}: ${err}\n`);
+      return [];
+    }
+  }
+
   return findSecretsInText(content)
     .filter(({ s }) => !isWhitelisted(rel, s, whitelist))
     .map(({ lineNo, s, entropy, kind }) => ({ rel, lineNo, s, entropy, kind }));
@@ -77,6 +91,8 @@ function main(): number {
   }
 
   let files: string[];
+  const staged =
+    !filteredArgs.includes("--all") && filteredArgs.includes("--staged");
   if (filteredArgs.includes("--all")) {
     files = gitLsFiles(REPO_ROOT);
   } else if (filteredArgs.includes("--staged")) {
@@ -100,7 +116,7 @@ function main(): number {
   const configFiles = [whitelistPath, excludedPathsPath];
   for (const filePath of files) {
     if (isConfigFile(filePath, configFiles)) continue;
-    allFindings.push(...scanFile(filePath, whitelist, excluded));
+    allFindings.push(...scanFile(filePath, whitelist, excluded, staged));
   }
 
   if (allFindings.length === 0) return 0;
