@@ -27,7 +27,9 @@ export function isWhitelisted(
   whitelist: WhitelistEntry[]
 ): boolean {
   for (const { pathPattern, secret: wlSecret } of whitelist) {
-    if (wlSecret !== secret) continue;
+    // An entry also covers any substring of itself (e.g. the base64 part of
+    // an allowlisted token).
+    if (wlSecret !== secret && !(secret && wlSecret.includes(secret))) continue;
     if (pathPattern === "*") return true;
     if (matchesPattern(relPath, pathPattern)) return true;
   }
