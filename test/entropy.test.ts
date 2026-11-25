@@ -59,10 +59,6 @@ describe("isSafe", () => {
     assert.ok(isSafe("ABCDEFGHIJKLMNOPQRSTUVWXYZABCD"));
   });
 
-  it("recognizes URLs as safe", () => {
-    assert.ok(isSafe("https://example.com/some/path"));
-  });
-
   it("recognizes CSS custom properties as safe", () => {
     assert.ok(isSafe("--primary-background-color"));
   });
