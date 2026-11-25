@@ -21,7 +21,7 @@ import { readFileSync } from "fs";
 import { resolve, relative } from "path";
 import { findSecretsInText, isBinary } from "./scanner.js";
 import { loadWhitelist, isWhitelisted } from "./whitelist.js";
-import { loadExcludedPaths, isExcluded } from "./paths.js";
+import { loadExcludedPaths, isExcluded, isLockfile } from "./paths.js";
 import { gitLsFiles, gitStagedFiles } from "./git.js";
 import type { WhitelistEntry } from "./whitelist.js";
 
@@ -78,9 +78,9 @@ function main(): number {
 
   let files: string[];
   if (filteredArgs.includes("--all")) {
-    files = gitLsFiles(REPO_ROOT);
+    files = gitLsFiles(REPO_ROOT).filter((f) => !isLockfile(f));
   } else if (filteredArgs.includes("--staged")) {
-    files = gitStagedFiles(REPO_ROOT);
+    files = gitStagedFiles(REPO_ROOT).filter((f) => !isLockfile(f));
   } else if (filteredArgs.length > 0) {
     files = filteredArgs.map((f) => resolve(f));
   } else {

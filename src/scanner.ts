@@ -32,13 +32,38 @@ export function isSafe(s: string): boolean {
   return false;
 }
 
+// Subresource Integrity / lockfile integrity hashes, e.g. "sha512-<base64>".
+// The extraction regexes below split on "-", so the base64 payload is matched
+// on its own; we instead record the span of each SRI string in the line and
+// skip any candidate that falls inside one.
+const SRI_PATTERN = /\bsha(?:512|384|256|1)-[A-Za-z0-9+/]+={0,2}/g;
+
+function sriSpans(line: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  for (const m of line.matchAll(SRI_PATTERN)) {
+    spans.push([m.index!, m.index! + m[0].length]);
+  }
+  return spans;
+}
+
 export type Finding = { lineNo: number; s: string; entropy: number; kind: string };
 
 export function findSecretsInText(content: string): Finding[] {
   const findings: Finding[] = [];
   const seen = new Set<string>();
 
-  function add(lineNo: number, s: string, entropy: number, kind: string) {
+  let spans: Array<[number, number]> = [];
+
+  function add(
+    lineNo: number,
+    m: RegExpMatchArray,
+    s: string,
+    entropy: number,
+    kind: string
+  ) {
+    const start = m.index!;
+    const end = start + m[0].length;
+    if (spans.some(([a, b]) => start >= a && end <= b)) return;
     if (!seen.has(s) && !isSafe(s)) {
       seen.add(s);
       findings.push({ lineNo, s, entropy, kind });
@@ -49,6 +74,7 @@ export function findSecretsInText(content: string): Finding[] {
   for (let i = 0; i < lines.length; i++) {
     const lineNo = i + 1;
     const line = lines[i];
+    spans = sriSpans(line);
 
     // URL-safe base64 / JWT / API tokens (alphanumeric + hyphen + underscore)
     for (const m of line.matchAll(
@@ -56,7 +82,7 @@ export function findSecretsInText(content: string): Finding[] {
     )) {
       const s = m[0];
       const e = shannonEntropy(s, URLSAFE_CHARS);
-      if (e >= ENTROPY_THRESHOLD_B64) add(lineNo, s, e, "token");
+      if (e >= ENTROPY_THRESHOLD_B64) add(lineNo, m, s, e, "token");
     }
 
     // Standard base64 (includes + and /)
@@ -67,14 +93,14 @@ export function findSecretsInText(content: string): Finding[] {
       const stripped = s.replace(/=+$/, "");
       if (stripped.includes("/") && PATH_LIKE.test(stripped)) continue;
       const e = shannonEntropy(stripped, BASE64_CHARS);
-      if (e >= ENTROPY_THRESHOLD_B64) add(lineNo, s, e, "base64");
+      if (e >= ENTROPY_THRESHOLD_B64) add(lineNo, m, s, e, "base64");
     }
 
     // Hex strings (32+ chars)
     for (const m of line.matchAll(/[0-9a-fA-F]{32,}/g)) {
       const s = m[0];
       const e = shannonEntropy(s, HEX_CHARS);
-      if (e >= ENTROPY_THRESHOLD_HEX) add(lineNo, s, e, "hex");
+      if (e >= ENTROPY_THRESHOLD_HEX) add(lineNo, m, s, e, "hex");
     }
   }
 
